@@ -18,7 +18,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Key words
 
-Propensity score, linear regression
+Propensity score, linear regression, rating, draft round.
 
 ## Introduction
 
@@ -210,10 +210,7 @@ updated_season_matched %>%
   theme_bw()
 
 
-ggplot(updated_season_matched, aes(x=.fitted, fill=draft_round)) + geom_bar() + 
-  labs(x="First round or not", y="number of players") + 
-  ggtitle("Figure: The distribution of player being drafted in first round") +
-  theme(title = element_text(size=10),aspect.ratio = 0.5)
+
   
 
 ```
