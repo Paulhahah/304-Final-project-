@@ -1,0 +1,325 @@
+---
+title: "The impact of draft round on the player's overall rating"
+author: ZHAOCHENG LI
+date: Dec 23, 2020
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Github link
+
+https://github.com/Paulhahah/304-Final-project-
+
+
+
+## Abstract
+
+ This report contains a brief analysis about how the draft round, player's height and weight, averaged points player scored per game, and other factors affect the overall rating of the player. Mainly focus on the effect of draft round on the rating, after performing propensity score and linear regression for the final model, I found that draft round and other factors have positive influence on player's rating, while the height has no significant effect on the rating.
+
+
+## Key words
+
+Propensity score, linear regression, rating, draft round.
+
+## Introduction
+
+
+   Basketball is one of the most popular and intense sports in the world. Specifically, NBA represents the highest level of professional basketball league and they would record all the relevant statistics for each player in every season. Then sports media and websites will perform some further analysis for players based on those information. It is worth to mention that a few websites or video games such as 2k sports, publish the ratings in the beginning of the season based on previous year's data.Finally, they would make a conclusion about the rating for each player, usually scale from 0 to 99. Rating represents an overall power and basketball skill for each NBA player.  This report will be focused on identifying the important player's statistics and analyzing how those factors would affect player's ratings, especially I am trying to find out the effect of draft round on the ratings of players. 
+
+
+
+
+
+
+## Data wrangling
+
+```{r,echo=FALSE, include=FALSE}
+library(dplyr)
+library(tidyverse)
+library(brms)
+library(knitr)
+library(readr)
+all_seasons <- read_csv("C:/Users/Paul/Desktop/STA304/Final Project/all_seasons.csv")
+#View(all_seasons)
+str(all_seasons)
+
+
+
+updated_season = filter(all_seasons, season=='2018-19')
+updated_season = subset(updated_season, select = -c(X1, team_abbreviation) )
+
+updated_season$draft_round[updated_season$draft_round == "Undrafted"] <- "0"
+updated_season$draft_round[updated_season$draft_round == "2"] <- "0"
+updated_season$draft_round[updated_season$draft_round == "1"] <- "1"
+updated_season$country[updated_season$country != "USA"] <- "0"
+updated_season$country[updated_season$country == "USA"] <- "1"
+updated_season$college[updated_season$college != "None"] <- "1"
+updated_season$college[updated_season$college == "None"] <- "0"
+
+
+updated_season$draft_round = as.factor(updated_season$draft_round)
+updated_season$country = as.factor(updated_season$country)
+updated_season$college = as.factor(updated_season$college)
+# import 2k dataset 
+nba2k20_full <- read_csv("C:/Users/Paul/Desktop/STA304/Final Project/nba2k20-full.csv")
+#View(nba2k20_full)
+
+updated_2k20 = subset(nba2k20_full, select = c(full_name,rating) )
+
+updated_season = full_join(updated_season, updated_2k20,by = c("player_name" = "full_name")) %>% na.omit()
+updated_round = updated_season %>% group_by(draft_round) %>% summarise(n=n(), .groups='drop')
+updated_country = updated_season %>% group_by(country) %>% summarise(n=n(), .groups='drop')
+updated_college = updated_season %>% group_by(college) %>% summarise(n=n(), .groups='drop')
+
+
+
+```
+
+
+  I obtain the two data sets from Kaggle website, they provide some basic body measurement (e.g.height,weight) and seasonal statistics about each NBA player from 1996-2019. Specifically, I focus on the analysis of 2018-19 season so I make an updated data set called "updated_season" only containing the statistics from this season. In addition, in order to perform the modeling and further analysis, I convert draft round, country and college to dummy variables. Then I add the player's rating from the second data set to my updated data set. Because some player's have missing value of statistics, I eliminate those player from the data set.
+
+
+
+
+## Now take a glimpse of the updated dataset
+
+```{r, echo=FALSE}
+
+head(updated_season) %>% tibble() %>% kable(align = 'lccrr', caption='Glimpse of updated dataset')
+
+
+```
+
+## Variables Explanation
+  Player's Rating (corresponding variable name: rating) is a discrete numeric variable, scaling from 0-99. It represents an overall power and basketball ability for each player. There are only a few player received an honor of rating 99.
+  
+  
+```{r, echo=FALSE}
+round_name = c("Second round & Undrafted","First round")
+updated_round = updated_season %>% group_by(draft_round) %>% summarise(n=n(), .groups='drop')
+updated_round = updated_round$draft_round
+tibble(`Draft round`=round_name, `Numeric Level`=updated_round) %>% kable(align = 'lccrr', caption='Draft Round Reference')
+```
+  
+  
+  The round of player being drafted (variable name: draft_round) is originally a categorical variable, it consists of three categories, player was drafted in first round, second round, or undrafted. However, we need to use it to determine the its effect on player's rating, so it is reasonable to convert it to dummy variable, use 1 to represent the players drafted in the first round, use 0 to represent those drafted in the second round or undrafted. Each round has 30 spots, and usually high-skilled players will be drafted in the first round.
+  
+```{r,echo=FALSE}
+college_name = c("No college experience","College experience")
+updated_college = updated_season %>% group_by(college) %>% summarise(n=n(), .groups='drop')
+updated_college = updated_college$college
+tibble(`College`=college_name, `Numeric Level`=updated_college) %>% kable(align = 'lccrr', caption='College Reference')
+```
+  
+  The college player attended (variable name: college) is a categorical variable and I change it to dummy variable for further analysis, 0 means the player did not go to college, and 1 means he did attend college.
+  
+```{r,echo=FALSE}
+country_name = c("Not from USA","USA")
+updated_country = updated_season %>% group_by(country) %>% summarise(n=n(), .groups='drop')
+updated_country = updated_country$country
+tibble(`Country`=country_name, `Numeric Level`=updated_country) %>% kable(align = 'lccrr', caption='Player Homeland Reference')
+
+
+```
+  
+  The country that player comes from  (variable name: country) is a categorical variable and I change it to dummy variable for further analysis, 0 means the player did not come from the America, and 1 means he is from America.
+ 
+  Height and weight of the player (variable name: player_height, player_weight) are measured in centimeters and in kilograms respectively. They are both continuous variables.
+ 
+  The number of game each player play in the season (variable name: gp) is a discrete variable and the maximum number is 82 games. The average points per game that each player score, average number of rebounds player get and average number of assists they give to teammates (variable name:pts, reb, ast) are all continuous variables.
+  
+  Net rating of each player (variable name: net_rating) is a continuous variable, representing the difference in team's point  per 100 possessions when the player is on the court, here we could simply treat it as how much the team would get better or worse when the player is on the court. Positive net rating means it is better for the team, negative means worse.
+ 
+  Percentage of team plays used by the player while he is on the floor, the measure of the player's shooting efficiency that takes into account free throws, 2 and 3 point shots are continuous variables, their variable name are "usg_pct" and "ts_pct" respectively.
+
+## Potential drawback
+
+  According to the original owner's note for the data set, he manually filled the missing value by using data from Basketball Reference website, so there might be some typos or incorrect values during the data transformation. This might affect the accuracy of modeling analysis.
+  
+
+
+## Apply propensity score matching
+```{r, echo=FALSE, include=FALSE}
+
+propensity_score <- glm(draft_round ~ age + player_height + player_weight + country+ college, 
+                        family = binomial,
+                        data = updated_season)
+car::vif(propensity_score)
+#library(tidyverse)
+library(broom)
+updated_season = augment(propensity_score,
+                         data = updated_season, type.predict = "response") %>% 
+                         dplyr::select(-.resid, -.std.resid, -.hat, -.sigma, -.cooksd)
+         
+updated_season = updated_season %>% 
+  arrange(.fitted, draft_round)
+
+updated_season$treated <- 
+  if_else(updated_season$draft_round == 0, 0, 1)
+
+updated_season$treated <- 
+  as.integer(updated_season$treated) 
+
+matches <- arm::matching(z = updated_season$treated, 
+                         score = updated_season$.fitted)
+
+updated_season <- cbind(updated_season, matches)
+matchID = updated_season %>% group_by(match.ind) %>% summarise(n=n(), .groups='drop')
+
+
+```
+
+  Now I perform the method of propensity score matching to the probability of getting into first round and the treatment is the first draft round. Firstly, it is to build a logistic regression model, with a binary outcome variable draft round. I choose age, the height and weight of players, their college and homeland because those are the relative information available before the NBA draft, other statistics such as average points scored, are recorded after they enter the league, so these cannot be used to predict draft round. The logistic model would be as following:    
+  $log(Y_{draft\ round})=\beta_0+\beta_1\cdot X_{age}+\beta_2\cdot X_{player's\ height} + \beta_3\cdot X_{player's\ weight} + \beta_4\cdot X_{country} + \beta_5\cdot X_{college}$
+ 
+  1) I check the Variance Inflation Factor(VIF) for each predictor variable, and all the values are less than 5, so it is likely to conclude that there is no multicollinearity among those variables. 2) Also 339 observation is considered as large sample size. 3) The outcome variable draft round is binary because it only takes value zero or one, zero means the player was drafted in the second round or undrafted, one means he was drafted in the first round. 4) We assume the predictor variables are linearly related to the log odds. All the assumptions are satisfied so this is a valid model for logistic regression.
+ 
+  Next I create the matches by using my prediction. Based on the similar propensity score, I want the untreated players (those were not drafted in the first round) to match with the treated players (who were drafted in the first round). Using the match function, I discover that 274 players are matched and 65 players are unmatched.
+
+
+
+
+
+
+
+## Next I reduce the dataset to those which are matched
+
+```{r, echo=FALSE, include=FALSE}
+updated_season_matched <- 
+  updated_season %>% 
+  filter(! is.na(match.ind)) %>% 
+  dplyr::select(-match.ind, -pairs, -treated)
+
+```
+
+```{r, echo=FALSE}
+
+head(updated_season_matched) %>% tibble() %>% kable(align = 'lccrr', caption='Glimpse of Matched dataset')
+```
+
+  I remove those who are unmatched and keep those 274 players who are matched, so 137 players are being treated.
+  The reason why I use propensity score matching is to eliminate the effect of confounding factors. When the treatment is not randomly assign to the groups, propensity score matching is able to balance the observed factors for two groups and then receive the estimates of treatment effect with smaller bias.
+
+
+
+
+
+## Draw the distribution of two groups. 
+
+```{r, echo=FALSE}
+library(tidyverse)
+
+labs <- paste("Draft round:", c("First", "Not first"))
+updated_season_matched %>%
+  mutate(draft_round = ifelse(draft_round == 1, labs[1], labs[2])) %>%
+  ggplot(aes(x = updated_season_matched$.fitted)) +
+  geom_histogram(color = "white") +
+  facet_wrap(~draft_round) +
+  xlab("Probability of going to first round") +
+  theme_bw()
+
+
+
+  
+
+```
+
+
+ The two histograms above show the the number of players with different probability of being drafted in the first round in the control and treatment group. Two plots are not similar due to the inaccuracy of matching.
+
+
+## Now we perform the regression. 
+
+```{r, echo=FALSE, include=FALSE}
+
+PSM_reg <- lm(rating ~ player_height+player_weight+draft_round+gp+pts+reb+ast+net_rating, 
+                data = updated_season_matched)
+summary(PSM_reg)
+
+
+rating_backAIC = step(PSM_reg, direction = "backward") %>% summary()
+
+
+
+rating_backBIC = step(PSM_reg, direction = "backward", k=log(length(updated_season_matched))) %>% summary()
+rating_backBIC
+rating_backAIC
+
+
+
+
+```
+
+
+## Modeling 
+  
+  Now I perform the linear regression to find the effect of draft round and other relative factors on the player's rating. I use both backward AIC and BIC for the variable selection, as a result, the backward AIC produces a model with smaller value of AIC, which indicates it is a better fitted model. Also, the variable player's height is eliminated from final model during the AIC procedure.
+
+
+```{r, echo=FALSE}
+#huxtable::huxreg(PSM_reg)
+#kable(rating_backBIC$coefficients)
+kable(rating_backAIC$coefficients)
+```
+
+## Result Discussion
+  
+  The final model is  $Y_{rating}= 61.0385031+ 0.0598812\cdot X_{player's\ weight}+0.7222513\cdot X_{draft\ round} + 0.0167878\cdot X_{gp} + 0.5914879\cdot X_{pts} + 0.2972685\cdot X_{reb} + 0.5368999\cdot X_{ast} + 0.1236370\cdot X_{net\ rating}$
+  
+    
+  The column 'Estimate' contains the estimated value of $\beta$, from top to bottom, each one represents estimated value from $\beta_0,..\beta_7$, respectively.
+
+  According to the regression summary table above, the p-value for all the independent variables are smaller than the benchmark 5%, so the coefficient estimates are all statistically significant. All the coefficients are positive, which means they have proportional positive effects on player's rating. Specifically, if a player was drafted in the first round instead of second round or undrafted, his overall rating will increase by 0.72 units. The average pointed scored and average assisted distributed also have large impact on the rating, the increase in one point or one assist will result in 0.59 or 0.54 units increment respectively in player's overall power. The net rating of the player and averaged rebound grabbed also have moderate level of impact on player's overall power, while the number of game played has the least effect, with approximately 0.017 units rise in player's rating if he plays for one more game.
+ 
+  Overall, if a player is drafted in the first round, and he has high number of statistics in average points scored, average rebound grabbed, and average assists he gives to teammates, he will be more likely to get a relatively high overall power or rating at the end of the season.  
+
+
+## Discussions and Limitations
+
+```{r, echo=FALSE}
+par(mfrow=c(2,2))
+new_reg <- lm(rating ~ player_weight+draft_round+gp+pts+reb+ast+net_rating, 
+                data = updated_season_matched)
+plot(new_reg)
+
+
+
+
+```
+
+```{r, echo=FALSE, include=FALSE}
+cor(updated_season_matched$ast, updated_season_matched$pts)
+```
+
+
+ Based on the plot of residual vs fitted value, there is no patter found in the graph, which means the model is well-fitted and the assumption of constant variance is satisfied. Similar result could be observed in standardized residuals vs fitted values plot. From the normal QQ plot, it is obvious that normal error MLR assumptions are being satisfied because most values are fitted perfectly on the line. From the Residuals vs Leverage plot, it is obvious that there are three outliers identified as #216, #217, #210, but these are not influential points.
+
+ One of the major limitations is the multicollinearity among independent variables. For example, the correlation between average assist distributed and average point scored is 0.69, which means they are highly correlated with each other. As a result, the coefficient estimation would be less accurate and it reduces the statistical power of the regression model. Another limitation is that the outliers should be removed because they will rise variability of the data, then diminish the statistical power of the model and also weaken the significance of estimated coefficient.
+ 
+ Another limitation is that when performing the propensity score matching, it is better to include more potential confounders (e.g.averaged points player scored) that affect the outcome rating, but this stats comes after they enter the NBA league, so these cannot be included in the PSM model. Also, I do not have the access to obtain the player's college performance, wingspan and standing reach of each player, etc. These variables are associated with the treatment assignment so the PSM method would be more accurate if they could be included in the model. 
+
+
+## Next step
+
+ Next time I could try to perform other propensity score methods such as stratification on the propensity score or inverse probability of treatment weighting to analyze the effect of draft round on rating and find out if the result would be the same or different.
+
+
+## Reference
+
+https://www.kaggle.com/justinas/nba-players-data
+
+https://www.kaggle.com/isaienkov/nba2k20-player-dataset
+
+https://www.tellingstorieswithdata.com/
+
+https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3144483/
+
+
+
+
+
